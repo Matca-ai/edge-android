@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:allowBackup="false"
+        android:label="Matca edge test"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity
+            android:name=".TestAppActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:launchMode="singleTop"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- The edge's install page opens matcaedge://pair?edge=…&code=… to pair this phone with a model. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="matcaedge" android:host="pair" />
+            </intent-filter>
+        </activity>
+        <provider
+            android:name=".TakenPictureProvider"
+            android:authorities="ai.matca.edge.sample.taken-picture"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <!-- LiteRT brings Play's model delivery and WorkManager along. A release takes neither path, so the
+             launcher stays the only component another app can name. -->
+        <service android:name="com.google.android.play.core.assetpacks.AssetPackExtractionService" tools:node="remove" tools:ignore="MissingClass" />
+        <receiver android:name="com.google.android.play.core.assetpacks.SessionStateBroadcastReceiver" tools:node="remove" tools:ignore="MissingClass" />
+        <service android:name="androidx.work.impl.background.systemjob.SystemJobService" tools:node="remove" tools:ignore="MissingClass" />
+        <receiver android:name="androidx.work.impl.diagnostics.DiagnosticsReceiver" tools:node="remove" tools:ignore="MissingClass" />
+        <receiver android:name="androidx.profileinstaller.ProfileInstallReceiver" tools:node="remove" tools:ignore="MissingClass" />
+    </application>
+</manifest>
