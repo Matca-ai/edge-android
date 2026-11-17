@@ -7,7 +7,9 @@ and new releases you make in the Matca console reach the app by themselves, with
 
 - **Classifies pictures on the phone**: JPEG bytes or a `Bitmap` in, a label and its confidence out.
 - **Keeps the model up to date**: it checks for a new release at start and, once 6 hours have passed, on the next
-  picture; it verifies the release's signature and takes it over on the picture after. A failed update never stops the model the phone already has.
+  picture; it verifies the release's signature and takes it over on the picture after.
+- **Gets the model on the first launch**: until the first release is on the phone it asks again within seconds, and
+  `waitUntilReady()` tells your app when the model is there. A failed update never stops the model the phone already has.
 - **Watches a camera feed**: turns a stream of frames into steady labels, and can wait for a stable picture,
   notice a black screen and only report confident answers that several frames agree on.
 - **Works offline from the first launch**, when you ship a release inside the app.
@@ -24,7 +26,7 @@ The library is on Maven Central as `ai.matca:edge`. In your app's `build.gradle.
 
 ```kotlin
 dependencies {
-    implementation("ai.matca:edge:0.2.1")
+    implementation("ai.matca:edge:1.0.1")
 }
 ```
 
@@ -62,6 +64,19 @@ println("${answer.label} ${answer.confidence}")   // With Cap 0.98
 
 `classify` throws `EdgeError.NoModel` until the first release has reached the phone. Call `classifier.close()` when
 you no longer need it.
+
+### Wait for the model on the first launch
+
+Right after install the model may still be downloading. Show that it is being prepared, then start:
+
+```kotlin
+showPreparing()                                   // e.g. "Preparing the model…"
+try {
+    classifier.waitUntilReady()                   // returns at once once the model is on the phone
+} catch (error: EdgeError) {
+    showError(error)                              // after 60 s: why no model came (no network, nothing released, …)
+}
+```
 
 ### Watch a camera feed
 

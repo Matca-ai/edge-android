@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "ai.matca"
-version = "0.2.1"
+version = "1.0.1"
 
 android {
     namespace = "ai.matca.edge"

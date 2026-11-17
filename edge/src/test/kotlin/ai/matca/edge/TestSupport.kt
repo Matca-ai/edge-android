@@ -11,6 +11,7 @@ import java.util.logging.Handler
 import java.util.logging.LogRecord
 import java.util.logging.Logger
 import javax.imageio.ImageIO
+import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -199,6 +200,7 @@ internal abstract class ClassifierTestBase {
         workDispatcher: CoroutineDispatcher = Dispatchers.Default,
         processExits: ProcessExitHistory = ProcessExitHistory.NONE,
         monotonicNanos: () -> Long = System::nanoTime,
+        retryDelays: List<Duration> = ASKS_WITHOUT_MODEL,
     ): Classifier {
         storeRoot = folder.newFolder()
         store = ModelStore(storeRoot)
@@ -207,7 +209,7 @@ internal abstract class ClassifierTestBase {
         return Classifier(
             "cap-detection", configuration, store, edge, engine, decoder, networkPolicy,
             clock = clock, scope = scope, workDispatcher = workDispatcher, systemVersion = SYSTEM_VERSION,
-            processExits = processExits, monotonicNanos = monotonicNanos,
+            processExits = processExits, monotonicNanos = monotonicNanos, retryDelays = retryDelays,
         )
     }
 

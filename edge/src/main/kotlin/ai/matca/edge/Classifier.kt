@@ -2,6 +2,9 @@ package ai.matca.edge
 
 import ai.matca.edge.preprocessing.PreprocessingOverrides
 import ai.matca.edge.preprocessing.PreprocessingSteps
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -9,13 +12,24 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val MODEL_NAME = Regex("[a-z0-9][a-z0-9-]{0,62}")
 private const val SHORTEST_CHECK_INTERVAL_MILLIS = 1_000L
+
+/**
+ * While no release is on the phone, the asks come this long after one another, the last repeating: a first launch
+ * without network, or before the first release, takes the model minutes after it can, not a check interval.
+ */
+internal val ASKS_WITHOUT_MODEL: List<Duration> = listOf(5.seconds, 15.seconds, 30.seconds, 1.minutes, 5.minutes)
 
 /** The model name forms URLs and a directory: a DNS label, as the control plane names models. */
 internal fun requireValidModelName(model: String) {
@@ -41,6 +55,7 @@ public class Classifier internal constructor(
     systemVersion: String = "",
     processExits: ProcessExitHistory = ProcessExitHistory.NONE,
     private val monotonicNanos: () -> Long = System::nanoTime,
+    private val retryDelays: List<Duration> = ASKS_WITHOUT_MODEL,
 ) : AutoCloseable {
     init {
         requireValidModelName(model)
@@ -66,6 +81,9 @@ public class Classifier internal constructor(
 
     @Volatile
     private var current: LoadedRelease? = null
+
+    /** The release in use as it changes, for the apps that wait for the first. */
+    private val releaseInUse = MutableStateFlow<Long?>(null)
 
     @Volatile
     private var localReleasesLoaded = false
@@ -109,6 +127,24 @@ public class Classifier internal constructor(
                 lastCheckFailure?.let { throw it }
             }
         }
+    }
+
+    /**
+     * The release on the phone, once there is one: at once when it is there, else as soon as an ask of the edge brings
+     * one (this call asks at once, and the classifier asks again quickly while there is none). Past the timeout it
+     * throws why none came, the last check's `EdgeError` or `EdgeError.NoModel`; the asks go on after it.
+     */
+    public suspend fun waitUntilReady(timeout: Duration = 60.seconds): Long = withContext(workDispatcher) {
+        loadLocalReleases()
+        currentRelease ?: run {
+            try {
+                checkForUpdates()
+            } catch (error: EdgeError) {
+                log.info("no release yet: ${describe(error)}")
+            }
+            currentRelease
+        } ?: withTimeoutOrNull(timeout) { releaseInUse.filterNotNull().first() }
+            ?: throw (lastCheckFailure ?: EdgeError.NoModel())
     }
 
     public fun watch(configure: Watch.Builder.() -> Unit = {}): Watch =
@@ -159,7 +195,20 @@ public class Classifier internal constructor(
     }
 
     internal fun startInBackground() {
-        ownScope.launch { start() }
+        ownScope.launch {
+            start()
+            askUntilAModelArrives()
+        }
+    }
+
+    /** The asks of `retryDelays` while no release is on the phone; the classifications' own asks take over after. */
+    internal suspend fun askUntilAModelArrives() {
+        var asked = 0
+        while (current == null && !closed) {
+            delay(retryDelays[minOf(asked, retryDelays.lastIndex)])
+            asked++
+            withContext(workDispatcher) { logFailures { checkForUpdates() } }
+        }
     }
 
     /** The release on disk and the bundled one, once, before the first classification or check. */
@@ -170,7 +219,10 @@ public class Classifier internal constructor(
             logFailures {
                 inUse.withLock {
                     if (!closed && current == null) current = store.current()?.let(updater::restore)
-                    current?.let { monitoring.releaseInUse(it.manifest.release) }
+                    current?.let {
+                        monitoring.releaseInUse(it.manifest.release)
+                        releaseInUse.value = it.manifest.release
+                    }
                 }
             }
             configuration.bundledRelease?.let { directory ->
@@ -277,6 +329,7 @@ public class Classifier internal constructor(
                     current = candidate
                     switched = true
                     monitoring.releaseInUse(candidate.manifest.release)
+                    releaseInUse.value = candidate.manifest.release
                 }
             }
         } finally {
