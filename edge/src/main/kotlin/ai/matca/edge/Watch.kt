@@ -83,19 +83,28 @@ public class Watch internal constructor(
         private var reported: String? = null
         private var lastFailure: String? = null
 
+        /**
+         * The wait for a steady picture sees every frame, so twelve steady frames take as long as the camera needs to
+         * deliver them; the interval paces the classifications and the black-screen check only.
+         */
         suspend fun take(frame: Frame, states: FlowCollector<WatchState>): Boolean {
-            if (!due(frame.time)) return true
-            val thumbnail = if (settings.detectBlackScreen || !stable) greyThumbnail(frame.image) else null
-            if (thumbnail != null && settings.detectBlackScreen && blackScreen.observe(thumbnail, frame.time)) {
+            val due = due(frame.time)
+            val waiting = !stable
+            if (!due && !waiting) return true
+            val thumbnail = if ((due && settings.detectBlackScreen) || waiting) greyThumbnail(frame.image) else null
+            if (thumbnail != null && due && settings.detectBlackScreen && blackScreen.observe(thumbnail, frame.time)) {
                 events.blackScreenEmitted()
                 states.emit(WatchState.BlackScreen)
                 return false
             }
-            if (thumbnail != null && !stable) {
+            if (thumbnail != null && waiting) {
                 stable = stability.observe(thumbnail, frame.time)
                 if (stability.timedOut) events.stablePictureTimedOut()
+                if (!stable) return true
+                // The frame that settled the picture is answered at once, and the interval runs from it.
+                lastFrameAt = frame.time
             }
-            if (stable) answered(frame)?.let { answer -> report(answer).forEach { states.emit(it) } }
+            answered(frame)?.let { answer -> report(answer).forEach { states.emit(it) } }
             return true
         }
 

@@ -24,7 +24,7 @@ The library is on Maven Central as `ai.matca:edge`. In your app's `build.gradle.
 
 ```kotlin
 dependencies {
-    implementation("ai.matca:edge:0.2.0")
+    implementation("ai.matca:edge:0.2.1")
 }
 ```
 

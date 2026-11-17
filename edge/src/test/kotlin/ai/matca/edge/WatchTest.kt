@@ -93,6 +93,18 @@ internal class WatchTest {
     }
 
     @Test
+    fun theWaitForASteadyPictureSeesEveryFrameNotOnlyThePacedOnes() = runBlocking {
+        // A camera at 15 frames a second: the picture settles on its 13th frame (800 ms), which is answered at once;
+        // the next answer would be due 250 ms later, after the last frame here.
+        val watch = watch(emptyList()) {
+            waitForStablePicture = true
+            ignoreFirstAnswers = 0
+        }
+        watch.states(frames(15, grey = 200, stepMillis = 1000L / 15)).toList()
+        assertEquals(1, classified)
+    }
+
+    @Test
     fun theStabilityDetectorGivesUpAfterFourSeconds() = runBlocking {
         val watch = watch(emptyList()) {
             waitForStablePicture = true
