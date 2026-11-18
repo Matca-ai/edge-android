@@ -29,7 +29,7 @@ public class Frame internal constructor(
 /**
  * What the app configures: where the edge is, the delivery key for one model and channel, the root key
  * that signs or certifies every manifest, and the optional labels, bundled release and network rules.
- * `monitoring` counts how each release does and sends those counts once a day; the app that leaves it on
+ * `monitoring` counts how each release does and sends those counts every few minutes; the app that leaves it on
  * needs its own legal basis for it, and false counts and sends nothing and deletes what was kept.
  */
 public data class EdgeConfiguration(

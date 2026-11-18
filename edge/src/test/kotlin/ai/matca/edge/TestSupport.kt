@@ -162,7 +162,7 @@ internal inline fun loggedDuring(block: () -> Unit): List<String> {
     return messages
 }
 
-/** The system version the tests' reports carry, as `sdks/edge-fixtures/report.json` has it. */
+/** The system version the tests' reports carry, as `sdks/test-fixtures/report.json` has it. */
 internal const val SYSTEM_VERSION = "13"
 
 /** A classifier over the fake edge and the fake model, and the manifests a test offers it. */

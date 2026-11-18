@@ -87,7 +87,7 @@ internal class HttpDeliveryTest {
     @Test
     fun aReportIsPostedAsJsonWithTheKeyAndTheUserAgent() = runBlocking {
         bodies["POST /v1/models/cap-detection/releases/3/report"] = 204 to ByteArray(0)
-        val report = """{"format":1,"day":"2026-11-03"}"""
+        val report = """{"format":2,"first":true,"day":"2026-11-03"}"""
         delivery().sendReport("cap-detection", 3, report)
         val request = requests.single()
         assertEquals(report, requestBodies.single())

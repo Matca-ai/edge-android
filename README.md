@@ -13,7 +13,7 @@ and new releases you make in the Matca console reach the app by themselves, with
 - **Watches a camera feed**: turns a stream of frames into steady labels, and can wait for a stable picture,
   notice a black screen and only report confident answers that several frames agree on.
 - **Works offline from the first launch**, when you ship a release inside the app.
-- **Reports how each release does** on phones, once a day, as counts only, never a picture. You can switch this off.
+- **Reports how each release does** on phones, within minutes, as counts only, never a picture. You can switch this off.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ The library is on Maven Central as `ai.matca:edge`. In your app's `build.gradle.
 
 ```kotlin
 dependencies {
-    implementation("ai.matca:edge:1.1.0")
+    implementation("ai.matca:edge:1.2.0")
 }
 ```
 
@@ -115,7 +115,7 @@ watch.states(frames).collect { state ->   // frames: Flow<Frame>, e.g. bitmap.to
 | `bundledRelease` | `null` | A release shipped in the app, used before any network |
 | `wifiOnly` | `false` | Downloads releases on Wi-Fi only |
 | `checkInterval` | 6 hours | How often it checks for a new release |
-| `monitoring` | `true` | Sends each release's daily counts; `false` sends nothing |
+| `monitoring` | `true` | Sends each release's counts while the app classifies; `false` sends nothing |
 
 `classifier.checkForUpdates()` checks right away and throws an `EdgeError` that says why a release was not taken.
 Catch it: an uncaught one in a bare `launch { }` crashes the app when the phone is offline. The current release is
@@ -124,8 +124,9 @@ Catch it: an uncaught one in a bare `launch { }` crashes the app when the phone 
 ## Privacy
 
 - Pictures never leave the phone.
-- The library sends only the release check, the downloads and, unless `monitoring` is `false`, one report a day of
-  counts per release: answers, confidence, speed and crashes. No device id, no user data, no location.
+- The library sends only the release check, the downloads and, unless `monitoring` is `false`, reports of
+  counts per release and day: answers, confidence, speed and crashes. They go after each release check and every
+  15 minutes while the app classifies. No device id, no user data, no location.
 - **Google Play's Data safety form**, with monitoring on: under *App info and performance* declare *Crash logs*,
   *Diagnostics* and *Other app performance data* as collected, for analytics, not shared, encrypted in transit.
   With monitoring off there is nothing to declare for this library.

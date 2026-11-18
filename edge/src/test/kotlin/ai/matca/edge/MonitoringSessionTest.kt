@@ -72,7 +72,7 @@ internal class MonitoringSessionTest : ClassifierTestBase() {
         now += 1.days.inWholeMilliseconds
         created()
         assertEquals(0L, delivery.reports.sumOf { it.report.getLong("crashes") })
-        assertEquals(listOf(1L), delivery.reports.map { it.report.getLong("sessions") })
+        assertEquals(listOf("2026-11-04" to 1L, "2026-11-05" to 1L), delivery.reports.map { it.day to it.report.getLong("sessions") })
     }
 
     @Test

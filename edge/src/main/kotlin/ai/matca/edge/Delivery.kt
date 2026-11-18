@@ -20,7 +20,7 @@ internal interface Delivery {
 
     suspend fun countFailedCheck(model: String, release: Long)
 
-    /** One finished day's counts for a release, as JSON (contract, section 11). */
+    /** One report of a release's counts on a day, as JSON (contract, section 11). */
     suspend fun sendReport(model: String, release: Long, report: String)
 }
 

@@ -182,7 +182,8 @@ public class Classifier internal constructor(
 
     /**
      * Every `classify` comes here with its picture still to be read, so reading it counts as preprocessing time.
-     * Monitoring adds to counts in memory here; the minute's write it may start runs in its own coroutine.
+     * Monitoring adds to counts in memory here; the minute's write and the sending it may start run in their own
+     * coroutines.
      */
     internal suspend fun classifyPicture(readPicture: () -> Frame): Answer = withContext(workDispatcher) {
         loadLocalReleases()
@@ -191,6 +192,7 @@ public class Classifier internal constructor(
             answerCounted(readPicture)
         } finally {
             if (monitoring.claimKeepIfDue()) inBackground { monitoring.keep() }
+            if (monitoring.claimSendingIfDue()) inBackground { monitoring.sendHeldDays() }
         }
     }
 
@@ -255,7 +257,7 @@ public class Classifier internal constructor(
             error as? EdgeError ?: EdgeError.UpdateStopped(describe(error))
         }
         // After the take rather than straight after the ask, so the sending's own write keeps the session a take began.
-        if (edgeAnswered) inBackground { monitoring.sendFinishedDays() }
+        if (edgeAnswered) inBackground { monitoring.sendHeldDays() }
         checksFinished++
     }
 

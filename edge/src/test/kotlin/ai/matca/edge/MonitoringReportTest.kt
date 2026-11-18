@@ -29,7 +29,7 @@ private val UNDECODABLE = byteArrayOf(0)
 /** One planned classification: what the model answers and how long reading the picture and the model take. */
 private data class Planned(val label: String, val confidence: Double, val preprocessingMillis: Long, val modelMillis: Long)
 
-/** Section 10, test 7: the counts of a scripted day are `sdks/edge-fixtures/report.json`, and counting is cheap. */
+/** Section 10, test 7: the first report of a scripted day is `sdks/test-fixtures/report-format-2.json`, and counting is cheap. */
 internal class MonitoringReportTest : ClassifierTestBase() {
     private val dayOfTheFixture = Instant.parse("2026-11-03T08:00:00Z").toEpochMilli()
     private var now = dayOfTheFixture
@@ -60,7 +60,9 @@ internal class MonitoringReportTest : ClassifierTestBase() {
 
     @Test
     fun aScriptedDayGivesTheFixtureReport() = runBlocking {
-        val expected = fixtureJson("report.json")
+        val expected = fixtureJson("report-format-2.json")
+        // The edge takes no report all day, so the day's first report carries every count of the script.
+        delivery.reportStatus = 503
         plan += plannedAnswers(expected)
         val watchedTimeouts = expected.getJSONObject("outcomes").getInt("no_stable_picture")
         val sessions = expected.getInt("sessions")
@@ -82,15 +84,17 @@ internal class MonitoringReportTest : ClassifierTestBase() {
         }
         assertEquals(0, plan.size)
 
+        // The next day's session counts on its own day, and its check is the first the edge takes a report after.
         now += 1.days.inWholeMilliseconds
+        delivery.reportStatus = 204
         session().checkForUpdates()
 
-        val sent = delivery.reports.single()
+        val sent = delivery.reports.single { it.status == 204 && it.day == expected.getString("day") }
         assertEquals(3L, sent.release)
         assertEquals(comparable(expected), comparable(sent.report))
     }
 
-    /** The steps are the trainer's own, kept once in the shared fixtures (`sdks/edge-fixtures/steps.json`). */
+    /** The steps are the trainer's own, kept once in the shared fixtures (`sdks/test-fixtures/steps.json`). */
     @Test
     fun theStepsAreTheSharedOnes() {
         val steps = fixtureJson("steps.json")

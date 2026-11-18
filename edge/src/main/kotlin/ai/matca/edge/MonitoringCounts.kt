@@ -9,7 +9,7 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 
-private const val REPORT_FORMAT = 1
+private const val REPORT_FORMAT = 2
 private const val STEP_COUNT = 12
 private const val NANOS_PER_MILLI = 1_000_000L
 private const val MILLIS_PER_DAY = 86_400_000L
@@ -97,9 +97,13 @@ internal class DayCounts {
         .put("sessions", sessions)
         .put("crashes", crashes)
 
-    /** The report for this release's day as it leaves the phone: the counts and what they were measured on, nothing else. */
-    fun report(day: Long, systemVersion: String): JSONObject = toJson()
+    /**
+     * A report for this release's day as it leaves the phone: the counts since the last one and what they were measured
+     * on, nothing else. `first` is what the control plane counts a phone by, so it is true once per release and day.
+     */
+    fun report(day: Long, first: Boolean, systemVersion: String): JSONObject = toJson()
         .put("format", REPORT_FORMAT)
+        .put("first", first)
         .put("day", utcDayText(day))
         .put("platform", PLATFORM)
         .put("os", systemVersion)
@@ -123,22 +127,36 @@ internal class DayCounts {
             val labelCounts = document.getJSONObject("labels")
             for (label in labelCounts.keys()) labels[label] = labelCounts.getLong(label)
         }
-
-        fun releaseDayOf(document: JSONObject) = ReleaseDay(document.getLong("release"), utcDayOf(document.getString("day")))
     }
 }
 
-/** Monitoring's kept file: every release's day the phone still holds, as `DayCounts.toJson` with its release and day. */
-internal fun keptDaysJson(days: Map<ReleaseDay, DayCounts>): JSONObject {
-    val list = JSONArray()
-    for ((key, counts) in days) list.put(counts.toJson().put("release", key.release).put("day", utcDayText(key.day)))
-    return JSONObject().put("format", REPORT_FORMAT).put("days", list)
+/**
+ * Monitoring's kept file: the counts not yet reported, as `DayCounts.toJson` with their release and day, and the
+ * releases and days a report was already sent for, so the next report for one of them is not a first again.
+ */
+internal class KeptMonitoring(val days: Map<ReleaseDay, DayCounts>, val sent: Set<ReleaseDay>) {
+    fun toJson(): JSONObject {
+        val dayList = JSONArray()
+        for ((key, counts) in days) dayList.put(counts.toJson().putReleaseDay(key))
+        val sentList = JSONArray()
+        for (key in sent) sentList.put(JSONObject().putReleaseDay(key))
+        return JSONObject().put("format", REPORT_FORMAT).put("days", dayList).put("sent", sentList)
+    }
+
+    companion object {
+        /** A file as `toJson` wrote it; one from a library before 1.2.0 has no `sent`, as it reported no day twice. */
+        fun of(document: JSONObject) = KeptMonitoring(
+            days = document.getJSONArray("days").objects().associate { releaseDayOf(it) to DayCounts.fromJson(it) },
+            sent = document.optJSONArray("sent")?.objects().orEmpty().map(::releaseDayOf).toSet(),
+        )
+    }
 }
 
-internal fun keptDaysOf(document: JSONObject): Map<ReleaseDay, DayCounts> {
-    val list = document.getJSONArray("days")
-    return List(list.length()) { list.getJSONObject(it) }.associate { DayCounts.releaseDayOf(it) to DayCounts.fromJson(it) }
-}
+private fun JSONObject.putReleaseDay(key: ReleaseDay): JSONObject = put("release", key.release).put("day", utcDayText(key.day))
+
+private fun releaseDayOf(document: JSONObject) = ReleaseDay(document.getLong("release"), utcDayOf(document.getString("day")))
+
+private fun JSONArray.objects(): List<JSONObject> = List(length()) { getJSONObject(it) }
 
 private fun confidenceStep(confidence: Double): Int {
     var step = 0

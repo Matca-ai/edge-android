@@ -7,10 +7,12 @@ import org.json.JSONObject
 private const val KEPT_FILE = "monitoring.json"
 private const val SESSION_FILE = "session.json"
 private const val KEEP_INTERVAL_MILLIS = 60_000L
-private const val REPORTS_PER_CHECK = 14
+private const val FIRST_SENDING_AFTER_MILLIS = 60_000L
+private const val SENDING_INTERVAL_MILLIS = 15 * 60_000L
+private const val REPORTS_PER_SENDING = 14
 private const val DAYS_HELD = 7
 
-// Answers that end a report: the edge took it, or refused it in a way it would refuse again.
+// Refusals the edge would give the same report again, so the report is dropped.
 private val FINAL_REFUSALS = setOf(400, 401, 404, 413)
 
 /** The session a classifier recorded at its creation: the release its process ran and when the session started. */
@@ -23,11 +25,15 @@ private class RecordedSession(val release: Long?, val startedAt: Long) {
     }
 }
 
+/** How a report ended: the edge took it, refused it in a way it would refuse again, or it stays for the next sending. */
+private enum class ReportOutcome { TAKEN, REFUSED_FOR_GOOD, KEPT }
+
 /**
  * What each release does on this phone (contract, section 11): counts per release and UTC day, held in memory,
- * kept in `monitoring.json` and sent as one report per finished day after a manifest ask. The `count…` calls only
- * add in memory; `keep`, `beginSession`, `recordRunningRelease` and `sendFinishedDays` read and write files and the
- * network, and run off the classification's path. With monitoring off nothing is counted and what was kept is deleted.
+ * kept in `monitoring.json` and sent as reports of what was counted since the last one, after a manifest ask and
+ * while the classifier answers. The `count…` and `claim…` calls only add and compare in memory; `keep`,
+ * `beginSession`, `recordRunningRelease` and `sendHeldDays` read and write files and the network, and run off the
+ * classification's path. With monitoring off nothing is counted and what was kept is deleted.
  */
 internal class Monitoring(
     private val enabled: Boolean,
@@ -38,17 +44,24 @@ internal class Monitoring(
     private val processExits: ProcessExitHistory,
     private val clock: () -> Long,
 ) {
+    // The counts no report has carried yet; `reportedDays` and `reportOnItsWay` are guarded by this map's lock too.
     private val days = HashMap<ReleaseDay, DayCounts>()
+    private val reportedDays = HashSet<ReleaseDay>()
+    private var reportOnItsWay: Pair<ReleaseDay, DayCounts>? = null
     private val releasesWithSession = HashSet<Long>()
     private val keeping = Any()
     private val sessionLock = Any()
     private val sending = Mutex()
     private val lastKeptAt = AtomicLong(clock())
-    private var keptDaysLoaded = false
+    private val nextSendingAt = AtomicLong(clock() + FIRST_SENDING_AFTER_MILLIS)
+    private var keptLoaded = false
     private var sessionStartedAt: Long? = null
 
     @Volatile
     private var runningRelease: Long? = null
+
+    @Volatile
+    private var sendingClaimedWhileAnswering = false
 
     fun countAnswer(release: Long, answer: Answer, preprocessingNanos: Long, modelNanos: Long) =
         count(release) { it.addAnswer(answer.label, answer.confidence, preprocessingNanos, modelNanos) }
@@ -77,16 +90,28 @@ internal class Monitoring(
     }
 
     /**
+     * True for the one classification that starts a sending: the first a minute after the classifier was created,
+     * so a release shows within minutes, and from then on the first a quarter of an hour after the last sending.
+     */
+    fun claimSendingIfDue(): Boolean {
+        if (!enabled) return false
+        val due = nextSendingAt.get()
+        val now = clock()
+        if (now < due || !nextSendingAt.compareAndSet(due, now + SENDING_INTERVAL_MILLIS)) return false
+        sendingClaimedWhileAnswering = true
+        return true
+    }
+
+    /**
      * The counts written to `monitoring.json`, together with what an earlier process kept there. With monitoring off
      * it deletes what was kept instead; it runs before every check, the one at creation included.
      */
     fun keep() {
         if (!enabled) return deleteKeptFiles()
         synchronized(keeping) {
-            loadKeptDays()
+            loadKept()
             lastKeptAt.set(clock())
-            val snapshot = synchronized(days) { days.mapValues { (_, counts) -> counts.copy() } }
-            store.writeDocument(KEPT_FILE, keptDaysJson(snapshot))
+            store.writeDocument(KEPT_FILE, heldNow().toJson())
         }
     }
 
@@ -112,16 +137,19 @@ internal class Monitoring(
     }
 
     /**
-     * After a manifest ask the edge answered: every finished day held, oldest first, at most 14. A day older than a
-     * week is dropped unsent; a report the edge took or refused for good is dropped; any other answer keeps it and
-     * ends the sending until the next check. A sending still waiting for the edge is left to finish, never doubled.
+     * After a manifest ask the edge answered and while the classifier answers: one report for every release and day
+     * with counts no report has carried, today's too, oldest first, at most 14. A day older than a week is dropped
+     * unsent. A report the edge neither took nor refused for good ends the sending until the next one. A sending still
+     * waiting for the edge is left to finish, never doubled.
      */
-    suspend fun sendFinishedDays() {
+    suspend fun sendHeldDays() {
         if (!enabled || !sending.tryLock()) return
         try {
-            synchronized(keeping) { loadKeptDays() }
-            for (key in finishedDays(utcDay(clock())).take(REPORTS_PER_CHECK)) {
-                if (!send(key)) break
+            // The first sending while answering stays a minute after creation, whatever the check at creation sent.
+            if (sendingClaimedWhileAnswering) nextSendingAt.set(clock() + SENDING_INTERVAL_MILLIS)
+            synchronized(keeping) { loadKept() }
+            for (key in heldDays(utcDay(clock())).take(REPORTS_PER_SENDING)) {
+                if (send(key) == ReportOutcome.KEPT) break
             }
             keep()
         } finally {
@@ -134,17 +162,30 @@ internal class Monitoring(
         synchronized(days) { add(countsOn(release, clock())) }
     }
 
-    private fun countsOn(release: Long, epochMillis: Long): DayCounts =
-        days.getOrPut(ReleaseDay(release, utcDay(epochMillis))) { DayCounts() }
+    private fun countsOn(release: Long, epochMillis: Long): DayCounts = countsOf(ReleaseDay(release, utcDay(epochMillis)))
 
-    /** Merges what an earlier process kept into the counts in memory, once; called holding `keeping`. */
-    private fun loadKeptDays() {
-        if (keptDaysLoaded) return
-        val kept = store.readDocument(KEPT_FILE, ::keptDaysOf).orEmpty()
-        synchronized(days) {
-            for ((key, counts) in kept) days.getOrPut(key) { DayCounts() }.add(counts)
+    private fun countsOf(key: ReleaseDay): DayCounts = days.getOrPut(key) { DayCounts() }
+
+    /** Merges what an earlier process kept into what memory holds, once; called holding `keeping`. */
+    private fun loadKept() {
+        if (keptLoaded) return
+        store.readDocument(KEPT_FILE, KeptMonitoring::of)?.let { kept ->
+            synchronized(days) {
+                for ((key, counts) in kept.days) countsOf(key).add(counts)
+                reportedDays += kept.sent
+            }
         }
-        keptDaysLoaded = true
+        keptLoaded = true
+    }
+
+    /**
+     * What a restart must find: the counts of a report still on its way are among them, so a process killed before
+     * the edge answers loses none (it may send them twice instead).
+     */
+    private fun heldNow(): KeptMonitoring = synchronized(days) {
+        val held = days.mapValuesTo(HashMap()) { (_, counts) -> counts.copy() }
+        reportOnItsWay?.let { (key, counts) -> held.getOrPut(key) { DayCounts() }.add(counts) }
+        KeptMonitoring(held, reportedDays.toSet())
     }
 
     private fun countCrashes(session: RecordedSession, readUntil: Long) {
@@ -162,24 +203,41 @@ internal class Monitoring(
         store.writeDocument(SESSION_FILE, document)
     }
 
-    /** The finished days still held, oldest first, once those older than a week are dropped. */
-    private fun finishedDays(today: Long): List<ReleaseDay> = synchronized(days) {
+    /** The releases and days with counts to report, oldest first, once all that is older than a week is dropped. */
+    private fun heldDays(today: Long): List<ReleaseDay> = synchronized(days) {
         days.keys.removeAll { today - it.day > DAYS_HELD }
-        days.keys.filter { it.day < today }.sortedWith(compareBy({ it.day }, { it.release }))
+        reportedDays.removeAll { today - it.day > DAYS_HELD }
+        days.keys.sortedWith(compareBy({ it.day }, { it.release }))
     }
 
-    /** Whether the report is done with, taken or refused for good; false when it stays for the next check. */
-    private suspend fun send(key: ReleaseDay): Boolean {
-        val counts = synchronized(days) { days[key]?.copy() } ?: return true
-        val status = try {
-            delivery.sendReport(model, key.release, counts.report(key.day, systemVersion).toString())
-            null
-        } catch (error: EdgeError.Edge) {
-            error.status
+    /**
+     * One report of what was counted for a release and day since its last report. The counts leave `days` before the
+     * report does, so what is counted while the edge answers goes with the next report; they come back when the
+     * report stays, whatever stopped it.
+     */
+    private suspend fun send(key: ReleaseDay): ReportOutcome {
+        val (counts, first) = synchronized(days) {
+            val counts = days.remove(key) ?: return ReportOutcome.TAKEN
+            reportOnItsWay = key to counts
+            counts to (key !in reportedDays)
         }
-        val done = status == null || status in FINAL_REFUSALS
-        if (done) synchronized(days) { days.remove(key) }
-        return done
+        var outcome = ReportOutcome.KEPT
+        try {
+            delivery.sendReport(model, key.release, counts.report(key.day, first, systemVersion).toString())
+            outcome = ReportOutcome.TAKEN
+        } catch (error: EdgeError.Edge) {
+            if (error.status in FINAL_REFUSALS) outcome = ReportOutcome.REFUSED_FOR_GOOD
+        } finally {
+            synchronized(days) {
+                reportOnItsWay = null
+                when (outcome) {
+                    ReportOutcome.TAKEN -> reportedDays += key
+                    ReportOutcome.REFUSED_FOR_GOOD -> Unit
+                    ReportOutcome.KEPT -> countsOf(key).add(counts)
+                }
+            }
+        }
+        return outcome
     }
 
     private fun deleteKeptFiles() {
