@@ -1,0 +1,59 @@
+# Builds a release on GitHub from the source commit Matca's release script pushed to main: runs the library's tests,
+# signs the bundle and uploads it to Maven Central, which publishes it once it validates, waits until Central says it
+# is published, signs where its files came from (SLSA build provenance through GitHub's Sigstore: `gh attestation
+# verify edge-<version>.aar --repo Matca-ai/edge-android`), and tags the release once all of that passed. Started by
+# `gh workflow run release.yml -f version=<version>`. The job runs in the maven-central environment, which waits for
+# the founder to approve it and only then hands it the environment's secrets (a signing subkey exported without its
+# primary's secret, its passphrase and the Central Portal token) and the variable MAVEN_SIGNING_KEY_ID naming the
+# subkey: nothing is signed or published, and no workflow pushed with Green's token reads them, without that approval.
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to release, as edge/build.gradle.kts names it
+        required: true
+
+concurrency: { group: release, cancel-in-progress: false }
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: maven-central
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: The version is the code's
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "a version is like 1.2.3" >&2; exit 1; }
+          grep -q "^version = \"$VERSION\"$" edge/build.gradle.kts || { echo "the code is not at $VERSION" >&2; exit 1; }
+      - name: The Android platform the library compiles against
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" > /dev/null
+      - name: Test, sign, upload to Maven Central and wait until it is published
+        env:
+          MAVEN_SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          MAVEN_SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+          MAVEN_SIGNING_KEY_ID: ${{ vars.MAVEN_SIGNING_KEY_ID }}
+          MAVEN_CENTRAL_TOKEN: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
+        run: scripts/publish-maven-central.sh "$VERSION"
+      - name: Sign where its files came from
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            edge/build/central-bundle/ai/matca/edge/*/edge-*.aar
+            edge/build/central-bundle/ai/matca/edge/*/edge-*.pom
+            edge/build/central-bundle/ai/matca/edge/*/edge-*.jar
+            edge/build/central-bundle/ai/matca/edge/*/edge-*.module
+      - name: Tag the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" --target "$(git rev-parse HEAD)" --title "$VERSION" \
+            --notes "ai.matca:edge $VERSION, published on Maven Central from this commit. Check a file of it: gh attestation verify edge-$VERSION.aar --repo $GITHUB_REPOSITORY"

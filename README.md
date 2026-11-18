@@ -26,7 +26,7 @@ The library is on Maven Central as `ai.matca:edge`. In your app's `build.gradle.
 
 ```kotlin
 dependencies {
-    implementation("ai.matca:edge:1.0.1")
+    implementation("ai.matca:edge:1.1.0")
 }
 ```
 
@@ -99,6 +99,9 @@ watch.states(frames).collect { state ->   // frames: Flow<Frame>, e.g. bitmap.to
 |---|---|---|
 | `frameInterval` | 250 ms | Classifies at most one frame per interval |
 | `waitForStablePicture` | `false` | Waits for a steady, bright picture before the first answer (at most 4 s) |
+| `stablePictureFrames` | 12 | Steady frames in a row that settle the picture |
+| `stablePictureMinimumBrightness` | 130.0 | Brightness (0–255) a steady frame needs; `0` if a dark picture is itself an answer |
+| `stablePictureTimeout` | 4.seconds | How long the wait lasts at most before answering anyway |
 | `detectBlackScreen` | `false` | Reports `BlackScreen` and stops when the picture goes black |
 | `ignoreFirstAnswers` | 4 | Skips the answers while the camera settles |
 | `confidenceGate` | 0.95 | Drops answers below it |

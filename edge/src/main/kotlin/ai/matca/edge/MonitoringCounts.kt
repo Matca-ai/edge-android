@@ -17,9 +17,10 @@ private const val MILLIS_PER_DAY = 86_400_000L
 /** The gate the trainer scores against: an answer at or above it is `answered`, below it `below_gate`. */
 internal const val CONFIDENCE_GATE = 0.95
 
-// The trainer's gate thresholds (services/trainer/matca_trainer/score.py, GATES): 12 steps between and around them.
-private val CONFIDENCE_STEPS = doubleArrayOf(0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.92, CONFIDENCE_GATE, 0.97, 0.98, 0.99)
-private val SPEED_STEPS_MILLIS = longArrayOf(10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000)
+// The trainer's gate thresholds: 12 steps between and around them. A test holds them and the speed steps to the
+// shared fixtures (steps.json), as the trainer, the control plane and the iOS library are held.
+internal val CONFIDENCE_STEPS = doubleArrayOf(0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.92, CONFIDENCE_GATE, 0.97, 0.98, 0.99)
+internal val SPEED_STEPS_MILLIS = longArrayOf(10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000)
 
 /** The UTC day of a moment, counted in days since 1970-01-01. */
 internal fun utcDay(epochMillis: Long): Long = Math.floorDiv(epochMillis, MILLIS_PER_DAY)

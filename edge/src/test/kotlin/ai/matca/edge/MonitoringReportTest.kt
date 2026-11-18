@@ -90,6 +90,16 @@ internal class MonitoringReportTest : ClassifierTestBase() {
         assertEquals(comparable(expected), comparable(sent.report))
     }
 
+    /** The steps are the trainer's own, kept once in the shared fixtures (`sdks/edge-fixtures/steps.json`). */
+    @Test
+    fun theStepsAreTheSharedOnes() {
+        val steps = fixtureJson("steps.json")
+        val shared = { name: String -> steps.getJSONArray(name).let { values -> List(values.length()) { values.getDouble(it) } } }
+        assertEquals(shared("confidence_thresholds"), CONFIDENCE_STEPS.toList())
+        assertEquals(shared("millisecond_thresholds"), SPEED_STEPS_MILLIS.map { it.toDouble() })
+        assertEquals(steps.getDouble("confidence_gate"), CONFIDENCE_GATE, 0.0)
+    }
+
     @Test
     fun aHundredThousandCountsTakeUnderFiftyMilliseconds() {
         val store = ModelStore(folder.newFolder())

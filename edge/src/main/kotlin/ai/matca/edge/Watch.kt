@@ -2,6 +2,7 @@ package ai.matca.edge
 
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
@@ -43,6 +44,9 @@ public class Watch internal constructor(
     internal class Settings(
         val frameInterval: Duration,
         val waitForStablePicture: Boolean,
+        val stablePictureFrames: Int,
+        val stablePictureMinimumBrightness: Double,
+        val stablePictureTimeout: Duration,
         val detectBlackScreen: Boolean,
         val ignoreFirstAnswers: Int,
         val confidenceGate: Double,
@@ -53,6 +57,15 @@ public class Watch internal constructor(
     public class Builder {
         public var frameInterval: Duration = 250.milliseconds
         public var waitForStablePicture: Boolean = false
+
+        /** The steady frames in a row that settle the picture. */
+        public var stablePictureFrames: Int = 12
+
+        /** The mean luma (0 to 255) a steady frame needs; 0 counts a dark picture as steady too. */
+        public var stablePictureMinimumBrightness: Double = 130.0
+
+        /** How long the wait lasts at most before the picture is taken as it is. */
+        public var stablePictureTimeout: Duration = 4.seconds
         public var detectBlackScreen: Boolean = false
         public var ignoreFirstAnswers: Int = 4
         public var confidenceGate: Double = 0.95
@@ -60,7 +73,9 @@ public class Watch internal constructor(
         public var agreementAtStart: Int = 4
 
         internal fun build() = Settings(
-            frameInterval, waitForStablePicture, detectBlackScreen, ignoreFirstAnswers, confidenceGate, agreement, agreementAtStart,
+            frameInterval, waitForStablePicture, stablePictureFrames.coerceAtLeast(1), stablePictureMinimumBrightness,
+            stablePictureTimeout.coerceAtLeast(Duration.ZERO), detectBlackScreen, ignoreFirstAnswers, confidenceGate, agreement,
+            agreementAtStart,
         )
     }
 
@@ -72,7 +87,11 @@ public class Watch internal constructor(
 
     /** One watch's memory between frames; `take` answers whether the watch goes on. */
     private inner class Run {
-        private val stability = FrameStabilityDetector()
+        private val stability = FrameStabilityDetector(
+            frames = settings.stablePictureFrames,
+            minBrightness = settings.stablePictureMinimumBrightness,
+            timeoutMillis = settings.stablePictureTimeout.inWholeMilliseconds,
+        )
         private val blackScreen = BlackScreenDetector()
         private var stable = !settings.waitForStablePicture
         private var lastFrameAt: Long? = null

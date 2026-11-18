@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "ai.matca"
-version = "1.0.1"
+version = "1.1.0"
 
 android {
     namespace = "ai.matca.edge"
@@ -73,7 +73,7 @@ tasks.withType<Test>().configureEach {
     }
 }
 
-// The folder hack/publish-edge-android.sh zips for Maven Central, which wants every file signed and checksummed.
+// The folder scripts/publish-maven-central.sh zips for Maven Central, which wants every file signed and checksummed.
 publishing {
     publications {
         register<MavenPublication>("release") {
@@ -112,10 +112,13 @@ publishing {
     }
 }
 
-// Unsigned when no key is set: a local build needs none, and the publish script refuses to upload without one.
+// Unsigned when no key is set: a local build needs none, and the publish script refuses to upload without one. The
+// release workflow holds a signing subkey only, exported without its primary's secret, so it names the subkey's id.
 providers.environmentVariable("MAVEN_SIGNING_KEY").orNull?.let { key ->
     signing {
-        useInMemoryPgpKeys(key, providers.environmentVariable("MAVEN_SIGNING_PASSWORD").getOrElse(""))
+        val password = providers.environmentVariable("MAVEN_SIGNING_PASSWORD").getOrElse("")
+        val subkey = providers.environmentVariable("MAVEN_SIGNING_KEY_ID").orNull?.takeIf { it.isNotBlank() }
+        if (subkey != null) useInMemoryPgpKeys(subkey, key, password) else useInMemoryPgpKeys(key, password)
         sign(publishing.publications["release"])
     }
 }

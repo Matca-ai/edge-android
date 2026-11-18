@@ -1,6 +1,7 @@
 package ai.matca.edge
 
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
@@ -112,6 +113,36 @@ internal class WatchTest {
         }
         watch.states(frames(20, grey = 60)).toList()
         assertEquals(4, classified)
+    }
+
+    @Test
+    fun aDarkSteadyPictureSettlesWhenTheAppAllowsDarkness() = runBlocking {
+        val watch = watch(emptyList()) {
+            waitForStablePicture = true
+            stablePictureMinimumBrightness = 0.0
+            ignoreFirstAnswers = 0
+        }
+        watch.states(frames(14, grey = 60)).toList()
+        assertEquals("as soon as a bright picture would, not after the timeout", 2, classified)
+    }
+
+    @Test
+    fun theAppSetsTheWaitsTimeoutAndItsSteadyFrames() = runBlocking {
+        val shortWait = watch(emptyList()) {
+            waitForStablePicture = true
+            stablePictureTimeout = 1.seconds
+            ignoreFirstAnswers = 0
+        }
+        shortWait.states(frames(20, grey = 60)).toList()
+        assertEquals("the frame at 1 s ends a 1 s wait", 16, classified)
+        classified = 0
+        val fewFrames = watch(emptyList()) {
+            waitForStablePicture = true
+            stablePictureFrames = 3
+            ignoreFirstAnswers = 0
+        }
+        fewFrames.states(frames(20, grey = 200)).toList()
+        assertEquals(17, classified)
     }
 
     @Test
